@@ -5,8 +5,9 @@ Configure these secrets in Streamlit Community Cloud (Advanced settings → Secr
     RUNPOD_API_KEY     = "rp_your_api_key"
     RUNPOD_ENDPOINT_ID = "your_endpoint_id"
 
-Streaming: submits via /run, then reads SSE from /stream/{job_id} token by token.
-The RunPod handler must use `yield` to emit {"type": "token", "content": "..."} chunks.
+Streaming: submits via /run, then polls /stream/{job_id} until COMPLETED.
+RunPod's /stream endpoint is a polling API (not long-lived SSE) — each call
+returns new items since the last poll. Poll interval: 0.5s.
 """
 
 import json
@@ -126,53 +127,51 @@ if prompt:
             if not job_id:
                 raise ValueError("No job ID returned from RunPod.")
 
-            # Step 2: open a persistent SSE connection to /stream/{job_id}.
-            # RunPod keeps this connection alive and pushes each yielded chunk
-            # as an SSE event — true streaming, no polling needed.
+            # Step 2: poll /stream/{job_id} until COMPLETED.
+            # RunPod's stream endpoint is polling-based — each call returns
+            # new items since the last call. Poll every 0.5s.
             stream_url = f"https://api.runpod.ai/v2/{RUNPOD_ENDPOINT_ID}/stream/{job_id}"
-            with requests.get(
-                stream_url,
-                headers={**RUNPOD_HEADERS, "Accept": "text/event-stream"},
-                stream=True,
-                timeout=180,
-            ) as stream_resp:
-                stream_resp.raise_for_status()
-                for line in stream_resp.iter_lines(decode_unicode=True):
-                    if not line or not line.startswith("data: "):
-                        continue
-                    data = json.loads(line[len("data: "):])
-                    job_status = data.get("status")
+            for _ in range(360):  # max 180s (360 × 0.5s)
+                poll_resp = requests.get(
+                    stream_url,
+                    headers={**RUNPOD_HEADERS, "Accept-Encoding": "identity"},
+                    timeout=30,
+                )
+                poll_resp.raise_for_status()
+                data = poll_resp.json()
+                job_status = data.get("status")
 
-                    for item in data.get("stream", []):
-                        output = item.get("output", {})
-                        if isinstance(output, str):
-                            try:
-                                output = json.loads(output)
-                            except json.JSONDecodeError:
-                                continue
-                        if isinstance(output, dict):
-                            etype = output.get("type")
-                            if etype == "token":
-                                if not tokens_started:
-                                    tokens_started = True
-                                    status_ph.empty()
-                                    tool_ph.empty()
-                                full_response += output.get("content", "")
-                                if full_response.strip():
-                                    response_ph.markdown(full_response + "▌")
-                            elif etype == "status":
-                                tool_ph.caption(f"🔍 {output.get('message', 'Processing...')}")
-                            elif etype == "done":
+                for item in data.get("stream", []):
+                    output = item.get("output", {})
+                    if isinstance(output, str):
+                        try:
+                            output = json.loads(output)
+                        except json.JSONDecodeError:
+                            continue
+                    if isinstance(output, dict):
+                        etype = output.get("type")
+                        if etype == "token":
+                            if not tokens_started:
+                                tokens_started = True
+                                status_ph.empty()
                                 tool_ph.empty()
-                                response_ph.markdown(full_response or "_(no response)_")
-                            elif etype == "error":
-                                error_msg = output.get("message", "Unknown error")
+                            full_response += output.get("content", "")
+                            if full_response.strip():
+                                response_ph.markdown(full_response + "▌")
+                        elif etype == "status":
+                            tool_ph.caption(f"🔍 {output.get('message', 'Processing...')}")
+                        elif etype == "done":
+                            tool_ph.empty()
+                            response_ph.markdown(full_response or "_(no response)_")
+                        elif etype == "error":
+                            error_msg = output.get("message", "Unknown error")
 
-                    if job_status == "FAILED":
-                        error_msg = data.get("error", "RunPod job failed.")
-                        break
-                    if job_status in ("COMPLETED", "CANCELLED"):
-                        break
+                if job_status == "FAILED":
+                    error_msg = data.get("error", "RunPod job failed.")
+                    break
+                if job_status in ("COMPLETED", "CANCELLED"):
+                    break
+                time.sleep(0.5)
 
         except ValueError as e:
             error_msg = str(e)
