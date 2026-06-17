@@ -14,9 +14,19 @@ import uuid
 
 import requests
 import streamlit as st
+from dotenv import load_dotenv
+
+# Local dev: load .env into the environment. On Streamlit Community Cloud there
+# is no .env — secrets entered in the dashboard are exposed as env vars instead,
+# so os.getenv works the same in both places.
+load_dotenv()
 
 _backend_base = os.getenv("BACKEND_URL", "http://localhost:8000")
 API_URL = f"{_backend_base.rstrip('/')}/chat/stream"
+
+# App-level bearer token — required when the backend (e.g. RunPod) sets API_KEY.
+API_KEY = os.getenv("API_KEY", "")
+_auth_headers = {"Authorization": f"Bearer {API_KEY}"} if API_KEY else {}
 
 SUGGESTED_PROMPTS = [
     "Show me top 10 products by sales",
@@ -98,6 +108,7 @@ if prompt:
             with requests.post(
                 API_URL,
                 json={"message": prompt, "session_id": st.session_state.session_id},
+                headers=_auth_headers,
                 stream=True,
                 timeout=180,
             ) as resp:

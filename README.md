@@ -2,37 +2,47 @@
 
 Streamlit chat UI for the ERP Assistant backend.
 
-## Two modes
-
-| File | Connects to |
-|---|---|
-| `streamlit_app.py` | FastAPI backend (`http://localhost:8001`) |
-| `streamlit_app_runpod.py` | RunPod Serverless endpoint (via SSE streaming) |
-
 ## Setup
 
 ```bash
-cd frontend
 pip install -r requirements.txt
 ```
 
-### FastAPI mode
+## Configuration
+
+| Variable | Purpose |
+|---|---|
+| `BACKEND_URL` | Backend base URL. Default `http://localhost:8000`. For RunPod: `https://<ENDPOINT_ID>.api.runpod.ai` |
+| `API_KEY` | Bearer token sent as `Authorization: Bearer <API_KEY>`. Required only if the backend sets `API_KEY`. |
+
+**Locally**, copy `.env.example` to `.env` and fill in the values — the app loads
+`.env` automatically (via `python-dotenv`). You can also override per-run with
+inline env vars.
+
+### Local FastAPI mode
 ```bash
+cp .env.example .env   # then edit if needed; defaults to http://localhost:8000
 streamlit run streamlit_app.py
 ```
-Requires backend running at `http://localhost:8001`.
 
 ### RunPod mode
-1. Copy `.streamlit/secrets.toml.example` → `.streamlit/secrets.toml`
-2. Fill in your `RUNPOD_API_KEY` and `RUNPOD_ENDPOINT_ID`
-3. Run:
+Set in `.env`, or inline:
 ```bash
-streamlit run streamlit_app_runpod.py
+BACKEND_URL=https://<ENDPOINT_ID>.api.runpod.ai API_KEY=your_key \
+  streamlit run streamlit_app.py
 ```
 
 ## Deploy (Streamlit Community Cloud)
 
+Streamlit Cloud does **not** read `.env`. Instead, paste the same `KEY = value`
+lines into the dashboard — Streamlit exposes them as environment variables, so
+the app reads them with `os.getenv` exactly like local.
+
 1. Push this folder as its own repo
 2. Go to [share.streamlit.io](https://share.streamlit.io) → New app
-3. Set main file to `streamlit_app_runpod.py`
-4. Add secrets in Advanced settings → Secrets (same keys as `secrets.toml.example`)
+3. Set main file to `streamlit_app.py`
+4. Add `BACKEND_URL` and `API_KEY` under **Settings → Secrets**, e.g.:
+   ```toml
+   BACKEND_URL = "https://<ENDPOINT_ID>.api.runpod.ai"
+   API_KEY = "your_key"
+   ```
